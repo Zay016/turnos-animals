@@ -289,7 +289,7 @@ input[type=color]{width:52px;height:36px;border:1px solid var(--line);border-rad
     </div>
 
     <ol class="steps" id="steps" aria-label="Pasos">
-      <li>Tu mascota</li><li>Estudio</li><li>Día y hora</li><li>Tus datos</li>
+      <li>Tu mascota</li><li>Tipo de Rx</li><li>Día y hora</li><li>Tus datos</li>
     </ol>
 
     <form class="card" id="bookForm" novalidate>
@@ -307,14 +307,14 @@ input[type=color]{width:52px;height:36px;border:1px solid var(--line);border-rad
         </div>
         <div class="field"><label class="lbl" for="mCar">Carácter</label><select id="mCar" name="mCar"></select>
           <span class="hint">Nos ayuda a prepararnos para el estudio. No es motivo para rechazar el turno.</span></div>
-        <div class="warnbox" id="acompWarn" hidden></div>
+        <div class="warnbox">⚠️ Para todas las radiografías, la mascota tiene que venir acompañada por <b>dos personas</b> que la sostengan durante el estudio.</div>
         <p class="err" id="err1" hidden></p>
       </section>
 
       <!-- Paso 2 -->
       <section class="step" data-step="2" hidden>
-        <h2>¿Qué hay que radiografiar?</h2>
-        <div class="field"><span class="lbl">Región o regiones <em>(según el pedido médico)</em></span>
+        <h2>Tipo de radiografía</h2>
+        <div class="field"><span class="lbl">Elegí una o más <em>(según el pedido médico)</em></span>
           <div class="zonas" id="zonas"></div></div>
         <div class="calc" id="calc"></div>
         <div class="field"><span class="lbl">Pedido médico</span>
@@ -440,7 +440,7 @@ const DEFAULT_CONFIG = {
   horarios: { 1: [SEMANA], 2: [SEMANA], 3: [SEMANA], 4: [SEMANA], 5: [SEMANA], 6: [SABADO] },
   paso: 10,
   dur: { base: 20, extraZona: 10, contencion: 10 },
-  precio: 50000, // por región radiografiada
+  precio: 50000, // por cada radiografía (tórax, abdomen, etc.)
   indicaciones: 'Llegá al menos 5 minutos antes del horario del turno.\nTraé el pedido médico (impreso o en el celular) y placas anteriores si tenés.\nSi el estudio es de abdomen, consultá con tu veterinario si necesita ayuno.',
 };
 // Usuarios de prueba. En la versión real las contraseñas se guardan encriptadas en el servidor, nunca en la página.
@@ -452,11 +452,11 @@ const ROLES = {
   dueno: { txt: 'Dirección', tabs: ['agenda', 'clientes', 'msgs', 'ajustes', 'qr', 'usuarios'] },
   tecnico: { txt: 'Radiología', tabs: ['agenda', 'clientes', 'msgs', 'ajustes', 'qr'] },
 };
-const ESPECIES = ['Canino', 'Felino', 'Ave', 'Roedor', 'Reptil', 'Exótico'];
-const CARACTERES = { docil: 'Dócil', tranquilo: 'Tranquilo', jugueton: 'Juguetón', timido: 'Tímido', nervioso: 'Nervioso', agresivo: 'Agresivo', territorial: 'Territorial', protector: 'Protector' };
+const ESPECIES = ['Canino', 'Felino']; // por ahora solo perros y gatos
+const CARACTERES = { docil: 'Dócil', tranquilo: 'Tranquilo', jugueton: 'Juguetón', timido: 'Tímido', nervioso: 'Nervioso', agresivo: 'Reactivo', territorial: 'Territorial', protector: 'Protector' };
 const DIFICILES = ['agresivo', 'nervioso', 'territorial', 'protector']; // necesitan alguien que los contenga
-const PESO_ACOMP = 20; // kg: desde acá también tiene que venir acompañado
-const ZONAS = ['Tórax', 'Abdomen', 'Columna', 'Cadera (displasia)', 'Miembro anterior', 'Miembro posterior', 'Cráneo', 'Cuello', 'Cuerpo entero', 'Otra'];
+const PESO_ACOMP = 20; // kg: se marca en la agenda para tener lista la contención
+const ZONAS = ['Tórax', 'Abdomen', 'Columna', 'Cadera (displasia)', 'Miembro anterior', 'Miembro posterior', 'Cráneo', 'Cuello', 'Otra'];
 const ESTADOS = {
   confirmado: { txt: 'Confirmado', cls: 'b-acc' },
   en_sala: { txt: 'En sala', cls: 'b-sun' },
@@ -493,13 +493,9 @@ const cfg = () => state.config;
 const franjasDe = s => cfg().horarios[parseYmd(s).getDay()] || [];
 const laboral = s => franjasDe(s).length > 0;
 const dificil = m => DIFICILES.includes(m.caracter);
-function motivosAcomp(m) {
-  const a = [];
-  if (dificil(m)) a.push('por su carácter');
-  if (m.peso > PESO_ACOMP) a.push('por su peso');
-  return a;
-}
-const acompTxt = m => { const a = motivosAcomp(m); return a.length ? `Tiene que venir acompañado por alguien que pueda contenerlo ${a.join(' y ')}.` : ''; };
+// Para todos los estudios: hacen falta dos personas para sostener a la mascota durante la placa
+const ACOMP = 'La mascota tiene que venir con dos personas que la sostengan durante el estudio.';
+const acompTxt = () => ACOMP;
 
 /* Horarios para mostrar: agrupa los días seguidos que tienen las mismas franjas */
 const DIAS_C = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
@@ -513,11 +509,11 @@ function horarioGrupos() {
   return out.filter(Boolean).map(g => ({ dias: g.desde === g.hasta ? DIAS_C[g.desde] : `${DIAS_C[g.desde]} a ${DIAS_C[g.hasta].toLowerCase()}`, horas: g.f.map(x => `${hhmm(x[0])} a ${hhmm(x[1])}`).join(' y ') }));
 }
 
-/* Duración y costo del turno según mascota + regiones */
+/* Duración y costo del turno según mascota + tipos de radiografía */
 function calcular(m, zonas, c = cfg()) {
   const n = Math.max(1, zonas.length);
-  const partes = [['Primera región', c.dur.base]];
-  if (n > 1) partes.push([`${n - 1} ${n === 2 ? 'región más' : 'regiones más'}`, (n - 1) * c.dur.extraZona]);
+  const partes = [['Primera radiografía', c.dur.base]];
+  if (n > 1) partes.push([`${n - 1} ${n === 2 ? 'radiografía más' : 'radiografías más'}`, (n - 1) * c.dur.extraZona]);
   if (dificil(m)) partes.push(['Tiempo de contención', c.dur.contencion]);
   return { total: partes.reduce((a, x) => a + x[1], 0), partes, precio: n * c.precio };
 }
@@ -554,7 +550,7 @@ function proximosDias(n) {
 
 /* ============ Mensajes ============ */
 const MSG = {
-  confirmacion: t => `¡Hola ${nombre1(t.dueno.nombre)}! 🐾 Te confirmamos el turno de radiografía de ${t.mascota.nombre} en ${cfg().negocio}.\n\n📅 ${cap(fmtLargo(t.fecha))}\n🕙 ${hhmm(t.inicio)} hs\n🩻 Rx de ${zonasTxt(t.zonas).toLowerCase()}\n📍 ${cfg().direccion}\n💲 ${plata(t.precio)}\n\nTe pedimos llegar 5 minutos antes y traer el pedido médico.${acompTxt(t.mascota) ? ' ' + acompTxt(t.mascota) : ''}\n\nSi necesitás cambiar o cancelar el turno, respondé este mensaje y lo coordinamos.`,
+  confirmacion: t => `¡Hola ${nombre1(t.dueno.nombre)}! 🐾 Te confirmamos el turno de radiografía de ${t.mascota.nombre} en ${cfg().negocio}.\n\n📅 ${cap(fmtLargo(t.fecha))}\n🕙 ${hhmm(t.inicio)} hs\n🩻 Rx de ${zonasTxt(t.zonas).toLowerCase()}\n📍 ${cfg().direccion}\n💲 ${plata(t.precio)}\n\nTe pedimos llegar 5 minutos antes, traer el pedido médico y venir acompañado por dos personas para sostener a ${t.mascota.nombre} durante el estudio.\n\nSi necesitás cambiar o cancelar el turno, respondé este mensaje y lo coordinamos.`,
   recordatorio: t => `Hola ${nombre1(t.dueno.nombre)}, te recordamos que mañana a las ${hhmm(t.inicio)} hs ${t.mascota.nombre} tiene turno de radiografía en ${cfg().direccion}. Llegá 5 minutos antes y traé el pedido médico. ¡Te esperamos! 🐾`,
   resultados: t => `Hola ${nombre1(t.dueno.nombre)}, ya están las placas de ${t.mascota.nombre} 🩻 Te las enviamos por acá${t.derivante ? ` y también a ${t.derivante}` : ''}. ¡Gracias por elegirnos!`,
   reprogramado: t => `Hola ${nombre1(t.dueno.nombre)}, reprogramamos el turno de radiografía de ${t.mascota.nombre} para el ${fmtLargo(t.fecha)} a las ${hhmm(t.inicio)} hs. Cualquier duda, respondé este mensaje.`,
@@ -582,7 +578,7 @@ function chatHTML(texto, quien, cuando) {
 }
 
 /* ============ Estado ============ */
-const KEY = 'turnero-rx-v2';
+const KEY = 'turnero-rx-v3';
 function load() { try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && Array.isArray(s.turnos)) return s; } catch (e) {} return null; }
 let avisoLleno = false;
 function save() {
@@ -604,7 +600,7 @@ function seed() {
     [dias[0], 620, M('Luna', 'Canino', 'Golden retriever', '4 años', 31, 'docil'), D('Ríos Martín', '11 5555 0102'), ['Cadera (displasia)'], 'Dra. Paz', ped, ''],
     [dias[0], 690, M('Michi', 'Felino', 'Común europeo', '3 años', 4.5, 'territorial'), D('Pérez Sofía', '11 5555 0103'), ['Abdomen'], '', null, 'Viene en transportadora.'],
     [dias[0], 760, M('Rocco', 'Canino', 'Bulldog francés', '2 años', 12, 'jugueton'), D('Gómez Lucía', '11 5555 0104'), ['Columna', 'Miembro posterior'], 'Veterinaria del Centro', ped, 'Rengea de la pata trasera izquierda.'],
-    [dias[0], 960, M('Kiwi', 'Ave', 'Cotorra', '1 año', 0.1, 'nervioso'), D('Fernández Diego', '11 5555 0105'), ['Cuerpo entero'], 'Dr. Acosta (exóticos)', ped, ''],
+    [dias[0], 960, M('Kiwi', 'Felino', 'Persa', '1 año', 3.2, 'timido'), D('Fernández Diego', '11 5555 0105'), ['Tórax'], 'Dr. Acosta', ped, ''],
     [dias[0], 1050, M('Thor', 'Canino', 'Ovejero alemán', '7 años', 36, 'agresivo'), D('Torres Valeria', '11 5555 0106'), ['Miembro anterior'], 'Dra. Paz', ped, 'Usa bozal.'],
     [dias[1], 610, M('Nala', 'Felino', 'Siamés', '9 años', 3.8, 'tranquilo'), D('Sosa Pedro', '11 5555 0107'), ['Tórax'], 'Veterinaria San Roque', ped, 'Control.'],
     [dias[1], 1000, M('Bruno', 'Canino', 'Rottweiler', '5 años', 44, 'protector'), D('Ruiz Ana', '11 5555 0108'), ['Cadera (displasia)', 'Columna'], '', ped, ''],
@@ -702,7 +698,7 @@ function marcaHTML() {
 function renderInfos() {
   const c = cfg();
   $('#infos').innerHTML = `
-    <div class="info hl"><b>Importante</b><span>Llegá al menos <strong>5 minutos antes</strong> del turno.</span></div>
+    <div class="info hl"><b>Importante</b><span>Llegá al menos <strong>5 minutos antes</strong> y vení acompañado por <strong>dos personas</strong>.</span></div>
     <div class="info"><b>Horarios</b>${horarioGrupos().map(g => `<span class="tnum">${esc(g.dias)} · ${esc(g.horas)}</span>`).join('')}</div>
     <div class="info"><b>Dirección</b><span>${esc(c.direccion)}</span><span class="muted">${esc(c.email)}</span><span class="muted">Se aceptan todas las formas de pago</span></div>`;
 }
@@ -835,12 +831,7 @@ $('#mEdad').innerHTML = '<option value="">Elegí…</option><option>Menos de 1 a
 $('#mCar').innerHTML = '<option value="">Elegí…</option>' + Object.entries(CARACTERES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
 $('#zonas').innerHTML = ZONAS.map(z => `<label class="zona"><input type="checkbox" name="zona" value="${esc(z)}"><span>${esc(z)}</span></label>`).join('');
 
-function actualizarAcomp() {
-  const t = acompTxt({ caracter: form.mCar.value, peso: parseFloat(form.mPeso.value) });
-  $('#acompWarn').hidden = !t; $('#acompWarn').textContent = t ? '⚠️ ' + t : '';
-}
-form.mCar.addEventListener('change', actualizarAcomp);
-form.mPeso.addEventListener('input', actualizarAcomp);
+function actualizarAcomp() {} // el aviso de venir acompañado es fijo para todos
 
 /* Clientes que vuelven: con su WhatsApp + un código recuperamos los datos de su mascota */
 const ret = { estado: 'inicio', tel: '', codigo: '', cliente: null, aviso: '' };
@@ -905,7 +896,7 @@ function validarMascota(m) {
   return falta.length ? `Completá: ${falta.join(', ')}.` : '';
 }
 
-/* Paso 2: regiones, costo y pedido */
+/* Paso 2: tipo de radiografía, costo y pedido */
 function renderEstudio() {
   form.querySelectorAll('input[name=zona]').forEach(i => i.checked = reserva.zonas.includes(i.value));
   renderCalc(); renderPedidoBox();
@@ -916,8 +907,8 @@ function renderCalc() {
   $('#calc').innerHTML = zonas.length
     ? `<span><span class="hint">Costo del estudio</span><br><span class="big tnum">${plata(r.precio)}</span></span>
        <span><span class="hint">Duración aprox.</span><br><span class="big tnum">${durTxt(r.total)}</span></span>
-       <span class="hint" style="flex-basis:100%">${zonas.length} ${zonas.length === 1 ? 'región' : 'regiones'} × ${plata(cfg().precio)}. El valor final se confirma en la veterinaria.</span>`
-    : `<span class="hint">Marcá una o más regiones para ver el costo y la duración. Cada región: ${plata(cfg().precio)}.</span>`;
+       <span class="hint" style="flex-basis:100%">${zonas.length} ${zonas.length === 1 ? 'radiografía' : 'radiografías'} × ${plata(cfg().precio)}. El valor final se confirma en la veterinaria.</span>`
+    : `<span class="hint">Elegí el tipo de radiografía para ver el costo y la duración. Cada una: ${plata(cfg().precio)}.</span>`;
 }
 $('#zonas').addEventListener('change', renderCalc);
 function renderPedidoBox() {
@@ -973,13 +964,13 @@ function renderResumen() {
   const fila = (k, v) => `<dt>${k}</dt><dd>${esc(v)}</dd>`;
   $('#summary').innerHTML =
     fila('Mascota', `${m.nombre} · ${m.especie} · ${m.raza} · ${m.edad} · ${m.peso} kg`) +
-    fila('Estudio', `Rx de ${zonasTxt(reserva.zonas).toLowerCase()}`) +
+    fila('Tipo de Rx', `Rx de ${zonasTxt(reserva.zonas).toLowerCase()}`) +
     fila('Día', cap(fmtLargo(reserva.fecha))) +
     fila('Horario', `${hhmm(reserva.inicio)} hs`) +
     fila('Costo', plata(reserva.precio)) +
     fila('Pedido médico', reserva.pedido ? reserva.pedido.nombre : 'Lo llevo el día del turno') +
     (reserva.derivante ? fila('Deriva', reserva.derivante) : '') +
-    (acompTxt(m) ? fila('Importante', acompTxt(m)) : '');
+    fila('Importante', 'Venir acompañado por dos personas y llegar 5 minutos antes');
 }
 
 function renderStep() {
@@ -1001,7 +992,7 @@ form.addEventListener('submit', e => {
     reserva.mascota = m;
   } else if (paso === 2) {
     const zonas = [...form.querySelectorAll('input[name=zona]:checked')].map(i => i.value);
-    err(2, zonas.length ? '' : 'Marcá qué región hay que radiografiar.'); if (!zonas.length) return;
+    err(2, zonas.length ? '' : 'Elegí el tipo de radiografía.'); if (!zonas.length) return;
     if (zonas.join() !== reserva.zonas.join()) reserva.inicio = null;
     reserva.zonas = zonas; reserva.derivante = form.mDeriva.value.trim();
   } else if (paso === 3) {
@@ -1037,7 +1028,7 @@ function confirmar(dueno, notas) {
   form.hidden = true; $('#steps').hidden = true; $('#hero').hidden = true;
   $('#doneCard').hidden = false;
   $('#doneTitle').textContent = `¡Listo, ${nombre1(dueno.nombre)}! El turno de ${t.mascota.nombre} está reservado.`;
-  const ind = [...(acompTxt(t.mascota) ? [acompTxt(t.mascota)] : []), ...lineas(cfg().indicaciones)];
+  const ind = [ACOMP, ...lineas(cfg().indicaciones)];
   $('#doneIndic').innerHTML = `<div class="endnote" style="display:grid;gap:6px"><b>Para el día del turno</b><ul class="indic">${ind.map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>`;
   $('#doneChat').innerHTML = chatHTML(MSG.confirmacion(t), `WhatsApp de ${cfg().negocio} → ${dueno.tel}`, 'Ahora');
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1049,7 +1040,7 @@ function descargarICS(t) {
   const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Turnos Rx//ES', 'BEGIN:VEVENT', `UID:${t.id}@turnos-rx`,
     `DTSTART:${f}T${hm(t.inicio)}`, `DTEND:${f}T${hm(t.inicio + t.duracion)}`,
     `SUMMARY:${txt(`Radiografía de ${t.mascota.nombre} · ${cfg().negocio}`)}`,
-    `DESCRIPTION:${txt(`Rx de ${zonasTxt(t.zonas).toLowerCase()}. Llegar 5 minutos antes y traer el pedido médico.`)}`,
+    `DESCRIPTION:${txt(`Rx de ${zonasTxt(t.zonas).toLowerCase()}. Llegar 5 minutos antes, traer el pedido médico y venir con dos personas.`)}`,
     `LOCATION:${txt(cfg().direccion)}`, 'BEGIN:VALARM', 'TRIGGER:-PT30M', 'ACTION:DISPLAY', 'DESCRIPTION:Turno de radiografía', 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar;charset=utf-8' }));
@@ -1154,7 +1145,6 @@ function tagsDe(t) {
   const a = [], m = t.mascota;
   if (dificil(m)) a.push(`<span class="badge b-bad">${esc(CARACTERES[m.caracter])}</span>`);
   if (m.peso > PESO_ACOMP) a.push(`<span class="badge b-sun">+${PESO_ACOMP} kg</span>`);
-  if (m.especie !== 'Canino' && m.especie !== 'Felino') a.push(`<span class="badge b-acc">${esc(m.especie)}</span>`);
   if (t.pedido === null) a.push('<span class="badge b-sun">Sin pedido</span>');
   return a.join('');
 }
@@ -1301,7 +1291,8 @@ function detalleHTML() {
   if (!t) return `<div class="empty"><p class="sect">Ficha del turno</p><p>Tocá un turno de la agenda para ver los datos de la mascota, el pedido médico y avisar al dueño.</p></div>`;
   const m = t.mascota, e = ESTADOS[t.estado];
   const alerts = [];
-  if (acompTxt(m)) alerts.push(`<div class="alert b-bad">⚠️ ${esc(acompTxt(m))}</div>`);
+  if (dificil(m)) alerts.push(`<div class="alert b-bad">⚠️ ${esc(CARACTERES[m.caracter])}: tener lista la contención</div>`);
+  if (m.peso > PESO_ACOMP) alerts.push(`<div class="alert b-sun">${m.peso} kg: preparar la mesa con ayuda</div>`);
   const r = calcular(m, t.zonas);
   const ultimoRes = state.mensajes.find(x => x.turnoId === t.id && x.tipo === 'Resultados');
 
@@ -1334,7 +1325,7 @@ function detalleHTML() {
     ${ultimoRes ? chatHTML(ultimoRes.texto, `Enviado a ${t.dueno.nombre}`, fmtHoraTs(ultimoRes.ts)) : ''}
     <p class="sect">Estudio</p>
     <dl class="facts">
-      <dt>Regiones</dt><dd>Rx de ${esc(zonasTxt(t.zonas).toLowerCase())}</dd>
+      <dt>Tipo</dt><dd>Rx de ${esc(zonasTxt(t.zonas).toLowerCase())}</dd>
       <dt>Duración</dt><dd>${durTxt(t.duracion)} <span class="muted">(${r.partes.map(x => `${esc(x[0].toLowerCase())} ${x[1]}`).join(' + ')})</span></dd>
       <dt>Costo</dt><dd class="tnum">${plata(t.precio)}</dd>
       <dt>Deriva</dt><dd>${esc(t.derivante || 'No indicó')}</dd>
@@ -1551,10 +1542,10 @@ function renderAjustes() {
       <div class="tablewrap"><table class="dur">
         <thead><tr><th>Concepto</th><th>Valor</th></tr></thead>
         <tbody>
-          <tr><td>Turno con una región</td><td>${inp('dur.base', c.dur.base)} min</td></tr>
-          <tr><td>Cada región más</td><td>${inp('dur.extraZona', c.dur.extraZona)} min</td></tr>
-          <tr><td>Se suma si es agresivo, nervioso, territorial o protector</td><td>${inp('dur.contencion', c.dur.contencion)} min</td></tr>
-          <tr><td>Precio por región</td><td>$ ${inp('precio', c.precio, 500, 10000000)}</td></tr>
+          <tr><td>Turno con una radiografía</td><td>${inp('dur.base', c.dur.base)} min</td></tr>
+          <tr><td>Cada radiografía más</td><td>${inp('dur.extraZona', c.dur.extraZona)} min</td></tr>
+          <tr><td>Se suma si es reactivo, nervioso, territorial o protector</td><td>${inp('dur.contencion', c.dur.contencion)} min</td></tr>
+          <tr><td>Precio por radiografía</td><td>$ ${inp('precio', c.precio, 500, 10000000)}</td></tr>
         </tbody>
       </table></div>
       <p class="hint" style="margin:0">Los cambios se aplican a los turnos nuevos. Los turnos ya reservados mantienen su duración y su precio.</p>
